@@ -1,0 +1,45 @@
+name: Build and Push Docker Images
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 构建后端镜像
+      - name: Build and push Backend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend_api_python
+          file: ./backend_api_python/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/quantdinger-backend:latest
+          platforms: linux/amd64,linux/arm64 # 同时构建x86和arm架构，一步到位
+
+      # 构建前端镜像
+      - name: Build and push Frontend
+        uses: docker/build-push-action@v4
+        with:
+          context: ./quantdinger_vue
+          file: ./quantdinger_vue/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/quantdinger-frontend:latest
+          platforms: linux/amd64,linux/arm64
