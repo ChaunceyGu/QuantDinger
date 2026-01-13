@@ -95,9 +95,35 @@ jobs:
           # Project uses yarn (as specified in package.json packageManager field)
           # Enable corepack to use the correct yarn version
           corepack enable
+          # Configure yarn registry with fallback to mirror for better reliability
+          # Try official registry first, fallback to Taobao mirror if needed
+          yarn config set registry https://registry.npmjs.org/ || true
+          yarn config set network-timeout 300000 || true
           # IMPORTANT: skip lifecycle scripts in CI to avoid running `prepare` (husky install),
           # which fails because `.git` is not present in GitHub Actions checkouts by default.
-          yarn install --frozen-lockfile --ignore-scripts
+          # Retry logic: try up to 3 times with exponential backoff
+          max_retries=3
+          retry_count=0
+          while [ $retry_count -lt $max_retries ]; do
+            if yarn install --frozen-lockfile --ignore-scripts; then
+              echo "✓ Dependencies installed successfully"
+              break
+            else
+              retry_count=$((retry_count + 1))
+              if [ $retry_count -lt $max_retries ]; then
+                echo "⚠ Install failed, retrying ($retry_count/$max_retries)..."
+                # Switch to Taobao mirror on retry for better reliability in China/network issues
+                if [ $retry_count -eq 2 ]; then
+                  echo "Switching to Taobao mirror for retry..."
+                  yarn config set registry https://registry.npmmirror.com/ || true
+                fi
+                sleep $((retry_count * 5))
+              else
+                echo "✗ Failed to install dependencies after $max_retries attempts"
+                exit 1
+              fi
+            fi
+          done
           # Use --frozen-lockfile for reproducible installs. Use --ignore-scripts to keep CI non-intrusive.
 
       - name: Frontend lint check
