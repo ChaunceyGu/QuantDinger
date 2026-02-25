@@ -15,10 +15,11 @@ import json
 import time
 from typing import Any, Dict, List, Tuple
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
+from app.utils.auth import login_required
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,15 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return float(v)
     except Exception:
         return default
+
+
+def _format_datetime(dt: Any) -> Any:
+    """Convert datetime object to ISO format string for JSON serialization."""
+    if dt is None:
+        return None
+    if hasattr(dt, 'isoformat'):
+        return dt.isoformat()
+    return dt
 
 
 def _safe_json_loads(value: Any, default: Any) -> Any:
@@ -255,19 +265,24 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
 
 
 @dashboard_bp.route("/summary", methods=["GET"])
+@login_required
 def summary():
     """
     Return dashboard summary used by `quantdinger_vue/src/views/dashboard/index.vue`.
     """
     try:
-        # Strategy counts
+        user_id = g.user_id
+        
+        # Strategy counts (filtered by user_id)
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
                 """
                 SELECT id, strategy_name, strategy_type, status, initial_capital, trading_config
                 FROM qd_strategies_trading
-                """
+                WHERE user_id = ?
+                """,
+                (user_id,)
             )
             strategies = cur.fetchall() or []
             cur.close()
@@ -292,7 +307,7 @@ def summary():
             if isinstance(tc, dict) and _truthy(tc.get("enable_ai_filter")):
                 ai_enabled_strategy_count += 1
 
-        # Positions (best-effort)
+        # Positions (best-effort, filtered by user_id)
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
@@ -300,8 +315,10 @@ def summary():
                 SELECT p.*, s.strategy_name, s.initial_capital, s.leverage, s.market_type
                 FROM qd_strategy_positions p
                 LEFT JOIN qd_strategies_trading s ON s.id = p.strategy_id
+                WHERE p.user_id = ?
                 ORDER BY p.updated_at DESC
-                """
+                """,
+                (user_id,)
             )
             rows = cur.fetchall() or []
             cur.close()
@@ -332,7 +349,7 @@ def summary():
                 }
             )
 
-        # Recent trades (best-effort)
+        # Recent trades (best-effort, filtered by user_id)
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
@@ -340,12 +357,22 @@ def summary():
                 SELECT t.*, s.strategy_name
                 FROM qd_strategy_trades t
                 LEFT JOIN qd_strategies_trading s ON s.id = t.strategy_id
+                WHERE t.user_id = ?
                 ORDER BY t.created_at DESC
                 LIMIT 500
-                """
+                """,
+                (user_id,)
             )
-            recent_trades = cur.fetchall() or []
+            recent_trades_raw = cur.fetchall() or []
             cur.close()
+        
+        # Convert datetime to timestamp for frontend compatibility
+        recent_trades = []
+        for t in recent_trades_raw:
+            trade = dict(t)
+            if trade.get('created_at') and hasattr(trade['created_at'], 'timestamp'):
+                trade['created_at'] = int(trade['created_at'].timestamp())
+            recent_trades.append(trade)
 
         # Compute performance statistics
         perf_stats = _compute_performance_stats(recent_trades)
@@ -497,18 +524,20 @@ def summary():
 
 
 @dashboard_bp.route("/pendingOrders", methods=["GET"])
+@login_required
 def pending_orders():
     """
     Return pending orders list for dashboard page.
     """
     try:
+        user_id = g.user_id
         page = max(1, _safe_int(request.args.get("page"), 1))
         page_size = max(1, min(200, _safe_int(request.args.get("pageSize"), 20)))
         offset = (page - 1) * page_size
 
         with get_db_connection() as db:
             cur = db.cursor()
-            cur.execute("SELECT COUNT(1) AS cnt FROM pending_orders")
+            cur.execute("SELECT COUNT(1) AS cnt FROM pending_orders WHERE user_id = ?", (user_id,))
             total = int((cur.fetchone() or {}).get("cnt") or 0)
             cur.close()
 
@@ -525,10 +554,11 @@ def pending_orders():
                        s.execution_mode AS strategy_execution_mode
                 FROM pending_orders o
                 LEFT JOIN qd_strategies_trading s ON s.id = o.strategy_id
+                WHERE o.user_id = ?
                 ORDER BY o.id DESC
-                LIMIT %s OFFSET %s
+                LIMIT ? OFFSET ?
                 """,
-                (int(page_size), int(offset)),
+                (user_id, int(page_size), int(offset)),
             )
             rows = cur.fetchall() or []
             cur.close()
@@ -575,6 +605,12 @@ def pending_orders():
                     "exchange_display": exchange_display,
                     "notify_channels": notify_channels,
                     "market_type": market_type or (r.get("market_type") or ""),
+                    # Format datetime fields for JSON serialization
+                    "created_at": _format_datetime(r.get("created_at")),
+                    "updated_at": _format_datetime(r.get("updated_at")),
+                    "executed_at": _format_datetime(r.get("executed_at")),
+                    "processed_at": _format_datetime(r.get("processed_at")),
+                    "sent_at": _format_datetime(r.get("sent_at")),
                 }
             )
 
@@ -607,18 +643,21 @@ def pending_orders():
 
 
 @dashboard_bp.route("/pendingOrders/<int:order_id>", methods=["DELETE"])
+@login_required
 def delete_pending_order(order_id: int):
     """
     Delete a pending order record (dashboard operation).
     """
     try:
+        user_id = g.user_id
         oid = int(order_id or 0)
         if oid <= 0:
             return jsonify({"code": 0, "msg": "invalid_id", "data": None}), 400
 
         with get_db_connection() as db:
             cur = db.cursor()
-            cur.execute("SELECT id, status FROM pending_orders WHERE id = %s", (oid,))
+            # Verify the order belongs to current user
+            cur.execute("SELECT id, status FROM pending_orders WHERE id = ? AND user_id = ?", (oid, user_id))
             row = cur.fetchone() or {}
             if not row:
                 cur.close()
@@ -627,7 +666,7 @@ def delete_pending_order(order_id: int):
             if st == "processing":
                 cur.close()
                 return jsonify({"code": 0, "msg": "cannot_delete_processing", "data": None}), 400
-            cur.execute("DELETE FROM pending_orders WHERE id = %s", (oid,))
+            cur.execute("DELETE FROM pending_orders WHERE id = ? AND user_id = ?", (oid, user_id))
             db.commit()
             cur.close()
 

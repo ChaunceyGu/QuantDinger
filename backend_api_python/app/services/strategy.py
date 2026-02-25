@@ -2,6 +2,7 @@ import os
 import time
 import json
 import threading
+import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -13,7 +14,7 @@ logger = get_logger(__name__)
 class StrategyService:
     """Strategy service."""
     
-    # 类变量：限制连接测试并发数
+    # Class variable: limit connection test concurrency
     _connection_test_semaphore = threading.Semaphore(5)
     
     def __init__(self):
@@ -21,7 +22,7 @@ class StrategyService:
         pass
         
     def get_running_strategies(self) -> List[Dict[str, Any]]:
-        """获取所有运行中的策略（仅ID）"""
+        """Get all running strategies (ID only)"""
         try:
             with get_db_connection() as db:
                 cursor = db.cursor()
@@ -35,13 +36,13 @@ class StrategyService:
             return []
 
     def get_running_strategies_with_type(self) -> List[Dict[str, Any]]:
-        """获取所有运行中的策略（包含类型信息）"""
+        """Get all running strategies (with type info)"""
         try:
             with get_db_connection() as db:
                 cursor = db.cursor()
-                # 假设 qd_strategies_trading 表中有 strategy_type 字段
-                # 如果没有，可能需要关联查询或者根据其他字段判断
-                # 这里假设表结构已更新
+                # Assume qd_strategies_trading table has strategy_type field
+                # If not, may need join query or determine from other fields
+                # Here we assume table structure is updated
                 query = "SELECT id, strategy_type FROM qd_strategies_trading WHERE status = 'running'"
                 cursor.execute(query)
                 results = cursor.fetchall()
@@ -57,14 +58,14 @@ class StrategyService:
     
     def get_exchange_symbols(self, exchange_config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        获取交易所交易对列表 (无需API Key)
+        Get exchange trading pairs (no API Key required)
         """
         try:
             exchange_id = exchange_config.get('exchange_id', '')
             proxies = exchange_config.get('proxies')
             
             if not exchange_id:
-                return {'success': False, 'message': '请选择交易所', 'symbols': []}
+                return {'success': False, 'message': 'Please select an exchange', 'symbols': []}
 
             # For these exchanges, prefer direct REST (no ccxt), aligned with local live-trading design.
             ex = str(exchange_id or "").strip().lower()
@@ -96,7 +97,7 @@ class StrategyService:
                             if sym.endswith("USDT") and len(sym) > 4:
                                 symbols.append(f"{sym[:-4]}/USDT")
                     symbols = sorted(list(set(symbols)))
-                    return {'success': True, 'message': f'获取成功，共 {len(symbols)} 个交易对', 'symbols': symbols}
+                    return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
 
                 if ex in ("coinbaseexchange", "coinbase_exchange"):
                     base = str(exchange_config.get("base_url") or exchange_config.get("baseUrl") or "https://api.exchange.coinbase.com").rstrip("/")
@@ -112,7 +113,7 @@ class StrategyService:
                             if quote_ccy == "USDT" and base_ccy:
                                 symbols.append(f"{base_ccy}/USDT")
                     symbols = sorted(list(set(symbols)))
-                    return {'success': True, 'message': f'获取成功，共 {len(symbols)} 个交易对', 'symbols': symbols}
+                    return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
 
                 if ex == "kraken":
                     if market_type == "spot":
@@ -141,7 +142,7 @@ class StrategyService:
                                 if sym and ("perpetual" in typ or typ.startswith("pf") or sym.startswith("PF_")):
                                     symbols.append(sym)
                     symbols = sorted(list(set(symbols)))
-                    return {'success': True, 'message': f'获取成功，共 {len(symbols)} 个交易对', 'symbols': symbols}
+                    return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
 
                 if ex == "kucoin":
                     if market_type == "spot":
@@ -176,7 +177,7 @@ class StrategyService:
                                 if base_ccy:
                                     symbols.append(f"{base_ccy}/USDT")
                     symbols = sorted(list(set(symbols)))
-                    return {'success': True, 'message': f'获取成功，共 {len(symbols)} 个交易对', 'symbols': symbols}
+                    return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
 
                 if ex == "gate":
                     base = str(exchange_config.get("base_url") or exchange_config.get("baseUrl") or "https://api.gateio.ws").rstrip("/")
@@ -202,7 +203,7 @@ class StrategyService:
                                 if name and name.upper().endswith("_USDT"):
                                     symbols.append(name.replace("_", "/"))
                     symbols = sorted(list(set(symbols)))
-                    return {'success': True, 'message': f'获取成功，共 {len(symbols)} 个交易对', 'symbols': symbols}
+                    return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
 
                 if ex == "bitfinex":
                     j = _req_json("https://api-pub.bitfinex.com/v2/conf/pub:list:pair:exchange") if market_type == "spot" else _req_json(
@@ -224,19 +225,19 @@ class StrategyService:
                         elif s.endswith("USDT") and len(s) > 4:
                             symbols.append(f"{s[:-4]}/USDT")
                     symbols = sorted(list(set(symbols)))
-                    return {'success': True, 'message': f'获取成功，共 {len(symbols)} 个交易对', 'symbols': symbols}
-                return {'success': True, 'message': '获取成功', 'symbols': symbols}
+                    return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
+                return {'success': True, 'message': 'Success', 'symbols': symbols}
             
             import ccxt
             
-            # 创建交易所实例 (public only)
+            # Create exchange instance (public only)
             exchange_class = getattr(ccxt, exchange_id, None)
             if not exchange_class:
-                return {'success': False, 'message': f'不支持的交易所: {exchange_id}', 'symbols': []}
+                return {'success': False, 'message': f'Unsupported exchange: {exchange_id}', 'symbols': []}
             
             exchange_config_dict = {
                 'enableRateLimit': True,
-                'options': {'defaultType': 'swap'} # 默认为 swap
+                'options': {'defaultType': 'swap'}  # Default to swap
             }
             if proxies:
                 exchange_config_dict['proxies'] = proxies
@@ -250,11 +251,11 @@ class StrategyService:
                     symbols.append(symbol)
             
             symbols.sort()
-            return {'success': True, 'message': f'获取成功，共 {len(symbols)} 个交易对', 'symbols': symbols}
+            return {'success': True, 'message': f'Success, {len(symbols)} trading pairs', 'symbols': symbols}
             
         except Exception as e:
             logger.error(f"Failed to fetch symbols: {str(e)}")
-            return {'success': False, 'message': f'获取交易对失败: {str(e)}', 'symbols': []}
+            return {'success': False, 'message': f'Failed to get trading pairs: {str(e)}', 'symbols': []}
     
     def test_exchange_connection(self, exchange_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -281,6 +282,7 @@ class StrategyService:
                 from app.services.live_trading.kucoin import KucoinFuturesClient
                 from app.services.live_trading.gate import GateSpotClient, GateUsdtFuturesClient
                 from app.services.live_trading.bitfinex import BitfinexClient, BitfinexDerivativesClient
+                from app.services.live_trading.deepcoin import DeepcoinClient
 
                 resolved = resolve_exchange_config(exchange_config or {})
                 safe_cfg = safe_exchange_config_for_log(resolved)
@@ -349,6 +351,8 @@ class StrategyService:
                         priv_data = client.get_wallets()
                     elif isinstance(client, BitfinexDerivativesClient):
                         priv_data = client.get_wallets()
+                    elif isinstance(client, DeepcoinClient):
+                        priv_data = client.get_balance()
                 except Exception as e:
                     msg = str(e)
                     # Add actionable hints for the most common Binance auth error.
@@ -426,16 +430,21 @@ class StrategyService:
         except Exception:
             return 'IndicatorStrategy'
 
-    def update_strategy_status(self, strategy_id: int, status: str) -> bool:
-        """Update strategy status."""
+    def update_strategy_status(self, strategy_id: int, status: str, user_id: int = None) -> bool:
+        """Update strategy status. If user_id is provided, verify ownership."""
         try:
-            now = int(time.time())
             with get_db_connection() as db:
                 cur = db.cursor()
-                cur.execute(
-                    "UPDATE qd_strategies_trading SET status = ?, updated_at = ? WHERE id = ?",
-                    (status, now, strategy_id)
-                )
+                if user_id is not None:
+                    cur.execute(
+                        "UPDATE qd_strategies_trading SET status = ?, updated_at = NOW() WHERE id = ? AND user_id = ?",
+                        (status, strategy_id, user_id)
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE qd_strategies_trading SET status = ?, updated_at = NOW() WHERE id = ?",
+                        (status, strategy_id)
+                    )
                 db.commit()
                 cur.close()
             return True
@@ -466,7 +475,7 @@ class StrategyService:
         return json.dumps(obj, ensure_ascii=False)
 
     def list_strategies(self, user_id: int = 1) -> List[Dict[str, Any]]:
-        """List strategies for local single-user."""
+        """List strategies for the specified user."""
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
@@ -474,8 +483,10 @@ class StrategyService:
                     """
                     SELECT *
                     FROM qd_strategies_trading
+                    WHERE user_id = ?
                     ORDER BY id DESC
-                    """
+                    """,
+                    (user_id,)
                 )
                 rows = cur.fetchall() or []
                 cur.close()
@@ -500,11 +511,15 @@ class StrategyService:
             logger.error(f"list_strategies failed: {e}")
             return []
 
-    def get_strategy(self, strategy_id: int) -> Optional[Dict[str, Any]]:
+    def get_strategy(self, strategy_id: int, user_id: int = None) -> Optional[Dict[str, Any]]:
+        """Get strategy by ID. If user_id is provided, verify ownership."""
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
-                cur.execute("SELECT * FROM qd_strategies_trading WHERE id = ?", (strategy_id,))
+                if user_id is not None:
+                    cur.execute("SELECT * FROM qd_strategies_trading WHERE id = ? AND user_id = ?", (strategy_id, user_id))
+                else:
+                    cur.execute("SELECT * FROM qd_strategies_trading WHERE id = ?", (strategy_id,))
                 r = cur.fetchone()
                 cur.close()
             if not r:
@@ -520,11 +535,11 @@ class StrategyService:
             return None
 
     def create_strategy(self, payload: Dict[str, Any]) -> int:
-        now = int(time.time())
         name = (payload.get('strategy_name') or '').strip()
         if not name:
             raise ValueError("strategy_name is required")
 
+        user_id = payload.get('user_id') or 1
         strategy_type = payload.get('strategy_type') or 'IndicatorStrategy'
         market_category = payload.get('market_category') or 'Crypto'
         execution_mode = payload.get('execution_mode') or 'signal'
@@ -534,25 +549,46 @@ class StrategyService:
         trading_config = payload.get('trading_config') or {}
         exchange_config = payload.get('exchange_config') or {}
 
+        # Strategy group fields
+        strategy_group_id = payload.get('strategy_group_id') or ''
+        group_base_name = payload.get('group_base_name') or ''
+
         # Denormalized fields for quick list rendering
         symbol = (trading_config or {}).get('symbol')
         timeframe = (trading_config or {}).get('timeframe')
         initial_capital = (trading_config or {}).get('initial_capital') or payload.get('initial_capital') or 1000
         leverage = (trading_config or {}).get('leverage') or 1
         market_type = (trading_config or {}).get('market_type') or 'swap'
+        
+        # Cross-sectional strategy fields (store in trading_config to avoid DB schema changes)
+        cs_strategy_type = payload.get('cs_strategy_type') or trading_config.get('cs_strategy_type') or 'single'
+        symbol_list = payload.get('symbol_list') or trading_config.get('symbol_list') or []
+        portfolio_size = payload.get('portfolio_size') or trading_config.get('portfolio_size') or 10
+        long_ratio = float(payload.get('long_ratio') or trading_config.get('long_ratio') or 0.5)
+        rebalance_frequency = payload.get('rebalance_frequency') or trading_config.get('rebalance_frequency') or 'daily'
+        
+        # Store cross-sectional config in trading_config
+        if cs_strategy_type == 'cross_sectional':
+            trading_config['cs_strategy_type'] = cs_strategy_type
+            trading_config['symbol_list'] = symbol_list
+            trading_config['portfolio_size'] = portfolio_size
+            trading_config['long_ratio'] = long_ratio
+            trading_config['rebalance_frequency'] = rebalance_frequency
 
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
                 """
                 INSERT INTO qd_strategies_trading
-                (strategy_name, strategy_type, market_category, execution_mode, notification_config,
+                (user_id, strategy_name, strategy_type, market_category, execution_mode, notification_config,
                  status, symbol, timeframe, initial_capital, leverage, market_type,
                  exchange_config, indicator_config, trading_config, ai_model_config, decide_interval,
+                 strategy_group_id, group_base_name,
                  created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                 """,
                 (
+                    user_id,
                     name,
                     strategy_type,
                     market_category,
@@ -569,8 +605,8 @@ class StrategyService:
                     self._dump_json_or_encrypt(trading_config, encrypt=False),
                     self._dump_json_or_encrypt(payload.get('ai_model_config') or {}, encrypt=False),
                     int(payload.get('decide_interval') or 300),
-                    now,
-                    now
+                    strategy_group_id,
+                    group_base_name
                 )
             )
             new_id = cur.lastrowid
@@ -578,9 +614,158 @@ class StrategyService:
             cur.close()
         return int(new_id)
 
-    def update_strategy(self, strategy_id: int, payload: Dict[str, Any]) -> bool:
-        now = int(time.time())
-        existing = self.get_strategy(strategy_id)
+    def batch_create_strategies(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Batch create strategies (multi-symbol)
+        
+        Args:
+            payload: Contains symbols (array) and other strategy config
+            
+        Returns:
+            {
+                'success': True/False,
+                'strategy_group_id': '...',
+                'created_ids': [1, 2, 3],
+                'failed_symbols': []
+            }
+        """
+        symbols = payload.get('symbols') or []
+        if not symbols or not isinstance(symbols, list):
+            raise ValueError("symbols array is required")
+        
+        base_name = (payload.get('strategy_name') or '').strip()
+        if not base_name:
+            raise ValueError("strategy_name is required")
+        
+        # Generate strategy group ID
+        strategy_group_id = str(uuid.uuid4())[:8]
+        
+        created_ids = []
+        failed_symbols = []
+        
+        for symbol in symbols:
+            try:
+                # Create individual strategy for each symbol
+                single_payload = dict(payload)
+                
+                # Parse symbol (may be "Market:SYMBOL" format)
+                if isinstance(symbol, str) and ':' in symbol:
+                    parts = symbol.split(':', 1)
+                    market_category = parts[0]
+                    symbol_name = parts[1]
+                else:
+                    market_category = payload.get('market_category') or 'Crypto'
+                    symbol_name = symbol
+                
+                # Strategy name with symbol suffix
+                single_payload['strategy_name'] = f"{base_name}-{symbol_name}"
+                single_payload['strategy_group_id'] = strategy_group_id
+                single_payload['group_base_name'] = base_name
+                single_payload['market_category'] = market_category
+                
+                # Update symbol in trading_config
+                trading_config = dict(single_payload.get('trading_config') or {})
+                trading_config['symbol'] = symbol_name
+                single_payload['trading_config'] = trading_config
+                
+                new_id = self.create_strategy(single_payload)
+                created_ids.append(new_id)
+                
+            except Exception as e:
+                logger.error(f"Failed to create strategy for symbol {symbol}: {e}")
+                failed_symbols.append({'symbol': symbol, 'error': str(e)})
+        
+        return {
+            'success': len(created_ids) > 0,
+            'strategy_group_id': strategy_group_id,
+            'group_base_name': base_name,
+            'created_ids': created_ids,
+            'failed_symbols': failed_symbols,
+            'total_created': len(created_ids),
+            'total_failed': len(failed_symbols)
+        }
+
+    def batch_start_strategies(self, strategy_ids: List[int], user_id: int = None) -> Dict[str, Any]:
+        """Batch start strategies. If user_id is provided, verify ownership."""
+        success_ids = []
+        failed_ids = []
+        
+        for sid in strategy_ids:
+            try:
+                self.update_strategy_status(sid, 'running', user_id=user_id)
+                success_ids.append(sid)
+            except Exception as e:
+                logger.error(f"Failed to start strategy {sid}: {e}")
+                failed_ids.append({'id': sid, 'error': str(e)})
+        
+        return {
+            'success': len(success_ids) > 0,
+            'success_ids': success_ids,
+            'failed_ids': failed_ids
+        }
+
+    def batch_stop_strategies(self, strategy_ids: List[int], user_id: int = None) -> Dict[str, Any]:
+        """Batch stop strategies. If user_id is provided, verify ownership."""
+        success_ids = []
+        failed_ids = []
+        
+        for sid in strategy_ids:
+            try:
+                self.update_strategy_status(sid, 'stopped', user_id=user_id)
+                success_ids.append(sid)
+            except Exception as e:
+                logger.error(f"Failed to stop strategy {sid}: {e}")
+                failed_ids.append({'id': sid, 'error': str(e)})
+        
+        return {
+            'success': len(success_ids) > 0,
+            'success_ids': success_ids,
+            'failed_ids': failed_ids
+        }
+
+    def batch_delete_strategies(self, strategy_ids: List[int], user_id: int = None) -> Dict[str, Any]:
+        """Batch delete strategies. If user_id is provided, verify ownership."""
+        success_ids = []
+        failed_ids = []
+        
+        for sid in strategy_ids:
+            try:
+                self.delete_strategy(sid, user_id=user_id)
+                success_ids.append(sid)
+            except Exception as e:
+                logger.error(f"Failed to delete strategy {sid}: {e}")
+                failed_ids.append({'id': sid, 'error': str(e)})
+        
+        return {
+            'success': len(success_ids) > 0,
+            'success_ids': success_ids,
+            'failed_ids': failed_ids
+        }
+
+    def get_strategies_by_group(self, strategy_group_id: str, user_id: int = None) -> List[Dict[str, Any]]:
+        """Get all strategies in a group. If user_id is provided, filter by user."""
+        try:
+            with get_db_connection() as db:
+                cur = db.cursor()
+                if user_id is not None:
+                    cur.execute(
+                        "SELECT id FROM qd_strategies_trading WHERE strategy_group_id = ? AND user_id = ?",
+                        (strategy_group_id, user_id)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT id FROM qd_strategies_trading WHERE strategy_group_id = ?",
+                        (strategy_group_id,)
+                    )
+                rows = cur.fetchall() or []
+                cur.close()
+            return [row['id'] for row in rows]
+        except Exception as e:
+            logger.error(f"get_strategies_by_group failed: {e}")
+            return []
+
+    def update_strategy(self, strategy_id: int, payload: Dict[str, Any], user_id: int = None) -> bool:
+        existing = self.get_strategy(strategy_id, user_id=user_id)
         if not existing:
             return False
 
@@ -594,6 +779,18 @@ class StrategyService:
         trading_config = payload.get('trading_config') if payload.get('trading_config') is not None else (existing.get('trading_config') or {})
         exchange_config = payload.get('exchange_config') if payload.get('exchange_config') is not None else (existing.get('exchange_config') or {})
         ai_model_config = payload.get('ai_model_config') if payload.get('ai_model_config') is not None else (existing.get('ai_model_config') or {})
+        
+        # Handle cross-sectional strategy config updates
+        if payload.get('cs_strategy_type') is not None:
+            trading_config['cs_strategy_type'] = payload.get('cs_strategy_type')
+        if payload.get('symbol_list') is not None:
+            trading_config['symbol_list'] = payload.get('symbol_list')
+        if payload.get('portfolio_size') is not None:
+            trading_config['portfolio_size'] = payload.get('portfolio_size')
+        if payload.get('long_ratio') is not None:
+            trading_config['long_ratio'] = payload.get('long_ratio')
+        if payload.get('rebalance_frequency') is not None:
+            trading_config['rebalance_frequency'] = payload.get('rebalance_frequency')
 
         symbol = (trading_config or {}).get('symbol')
         timeframe = (trading_config or {}).get('timeframe')
@@ -619,7 +816,7 @@ class StrategyService:
                     indicator_config = ?,
                     trading_config = ?,
                     ai_model_config = ?,
-                    updated_at = ?
+                    updated_at = NOW()
                 WHERE id = ?
                 """,
                 (
@@ -636,7 +833,6 @@ class StrategyService:
                     self._dump_json_or_encrypt(indicator_config, encrypt=False),
                     self._dump_json_or_encrypt(trading_config, encrypt=False),
                     self._dump_json_or_encrypt(ai_model_config, encrypt=False),
-                    now,
                     strategy_id
                 )
             )
@@ -644,11 +840,15 @@ class StrategyService:
             cur.close()
         return True
 
-    def delete_strategy(self, strategy_id: int) -> bool:
+    def delete_strategy(self, strategy_id: int, user_id: int = None) -> bool:
+        """Delete strategy. If user_id is provided, verify ownership."""
         try:
             with get_db_connection() as db:
                 cur = db.cursor()
-                cur.execute("DELETE FROM qd_strategies_trading WHERE id = ?", (strategy_id,))
+                if user_id is not None:
+                    cur.execute("DELETE FROM qd_strategies_trading WHERE id = ? AND user_id = ?", (strategy_id, user_id))
+                else:
+                    cur.execute("DELETE FROM qd_strategies_trading WHERE id = ?", (strategy_id,))
                 db.commit()
                 cur.close()
             return True

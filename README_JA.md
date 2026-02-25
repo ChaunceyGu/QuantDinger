@@ -53,7 +53,7 @@
 
 ### QuantDingerとは？
 
-QuantDingerは **ローカルファースト、プライバシー重視の定量的取引インフラストラクチャ** です。完全にあなたのマシン上で実行され、戦略、取引データ、APIキーを完全にコントロールできます。
+QuantDingerは **ローカルファースト、プライバシー重視のセルフホスト型定量取引インフラ** です。あなたのマシン/サーバー上で実行され、**PostgreSQL によるマルチユーザーアカウント** を提供しつつ、戦略・取引データ・APIキーを完全にコントロールできます。
 
 ### なぜローカルファーストなのか？
 
@@ -73,7 +73,7 @@ QuantDingerには、ウェブから金融情報を収集し、ローカル市場
 
 ### コアバリュー
 
-- **🔓 Apache 2.0 オープンソース**: 完全に寛容で商用利用に適しています。ウイルス性のGPL/AGPLライセンスとは異なり、コードと変更を真に所有できます。
+- **🔓 Apache 2.0 オープンソース（コード）**: 寛容で商用利用に適しています。Apache 2.0 の範囲で fork/改変が可能ですが、ライセンス/著作権表示など必要な告知は保持してください。
 - **🐍 Pythonネイティブ & ビジュアル**: 標準のPythonでインジケーターを作成（PineScriptより簡単）、AIが支援します。チャート上でシグナルを直接可視化 ——「ローカル版TradingView」体験を構築。
 - **🤖 AIループ最適化**: 戦略を実行するだけでなく、AIがバックテスト結果を分析してパラメータ調整（ストップロス/利益確定/MACD設定）を提案し、閉ループ最適化を形成します。
 - **🌍 グローバルマーケットアクセス**: 暗号資産（実取引）、米国/中国株、FX、先物（データ/通知）をサポートする統一システム。
@@ -93,9 +93,26 @@ QuantDingerには、ウェブから金融情報を収集し、ローカル市場
 ---
 
 ## 📚 ドキュメント
+
+### 開発ガイド
 - [Python 戦略開発ガイド](docs/STRATEGY_DEV_GUIDE_JA.md)
+- [Interactive Brokers (IBKR) トレーディングガイド](docs/IBKR_TRADING_GUIDE_EN.md) 🆕
+- [MetaTrader 5 (MT5) トレーディングガイド](docs/MT5_TRADING_GUIDE_EN.md) 🆕
+
+### 通知設定
+- [Telegram 通知設定](docs/NOTIFICATION_TELEGRAM_CONFIG_EN.md)
+- [メール (SMTP) 通知設定](docs/NOTIFICATION_EMAIL_CONFIG_EN.md)
+- [SMS (Twilio) 通知設定](docs/NOTIFICATION_SMS_CONFIG_EN.md)
 
 ## 📸 ビジュアルツアー
+
+<div align="center">
+  <h3>🗺️ システムアーキテクチャ概要</h3>
+  <p>QuantDinger の AI 駆動型リサーチ、バックテスト、自動取引機能の全体像。</p>
+  <img src="docs/screenshots/tuopu.png" alt="QuantDinger システムトポロジー" width="100%" style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 800px;">
+</div>
+
+<br/>
 
 <div align="center">
   <h3>📊 プロフェッショナル・クオンツダッシュボード</h3>
@@ -130,6 +147,13 @@ QuantDingerには、ウェブから金融情報を収集し、ローカル市場
       <img src="docs/screenshots/indicator_creat_python_code.png" alt="Code Generation" style="border-radius: 6px;">
     </td>
   </tr>
+  <tr>
+    <td colspan="2" align="center" valign="top">
+      <h3>📊 ポートフォリオモニター</h3>
+      <p>ポジション追跡、アラート設定、メール/Telegram経由でAI分析レポートを受信。</p>
+      <img src="docs/screenshots/portfolio.jpg" alt="Portfolio Monitor" style="border-radius: 6px; max-width: 90%;">
+    </td>
+  </tr>
 </table>
 
 ---
@@ -150,17 +174,22 @@ QuantDingerには、ウェブから金融情報を収集し、ローカル市場
 2.  **戦略設定**: リスク管理ルール（ポジションサイジング、ストップロス、利益確定）を追加。
 3.  **バックテスト & AI最適化**: バックテストを実行し、豊富なパフォーマンス指標を表示し、**AIに結果を分析させて改善を提案**させます（例：「MACD閾値をXに調整」）。
 4.  **実行モード**:
-    - **実取引**: 直接API実行、10以上の暗号資産取引所（Binance, OKXなど）をサポート。
-    - **シグナル通知**: 実取引を実行しない市場（株式/FX/先物）向けに、Telegram, Discord, Email, SMS, Webhook経由でシグナルを送信。
+    - **実取引**:
+      - **暗号資産**: 直接API実行、10以上の取引所（Binance, OKX, Bitget, Bybitなど）をサポート
+      - **米国/香港株式**: Interactive Brokers (IBKR)経由 🆕
+      - **外国為替**: MetaTrader 5 (MT5)経由 🆕
+    - **シグナル通知**: 実取引をサポートしていない市場（A株/先物）向けに、Telegram, Discord, Email, SMS, Webhook経由でシグナルを送信。
 
-### 3. AI マルチエージェントリサーチ
-*あなたの24時間365日稼働するAI投資委員会。*
+### 3. AI分析システム
+*高速・正確・プロフェッショナルなレポート。*
 
-システムは、戦略の二次フィルターとして機能するマルチエージェントチームを雇用します：
+QuantDingerは効率的なAI分析システムを搭載：
 
-- **リサーチエージェント**: ウェブニュースとマクロイベント（Google/Bing）を収集。
-- **分析エージェント**: テクニカル指標と資金フローを分析。
-- **戦略統合**: AIの判断を「市場フィルター」として使用可能 —— AIのセンチメントが一致する場合にのみ戦略の取引を許可（例：「AIリスクアナリストがマクロリスクが高いと判断した場合は購入しない」）。
+- **高速分析モード**: 単一LLM呼び出しアーキテクチャによる迅速で正確な分析（複雑なマルチエージェントシステムに代わる）
+- **グローバル市場統合**: リアルタイム市場データ、ヒートマップ、経済カレンダーを分析ページに統合
+- **ATRベースの取引レベル**: テクニカル分析（ATR、サポート/レジスタンス）に基づくストップロス・利確の推奨
+- **分析メモリ**: 履歴確認と継続学習のための分析結果の保存
+- **戦略統合**: AI分析を戦略の「市場フィルター」として使用可能
 
 ### 4. ユニバーサルデータエンジン
 
@@ -277,27 +306,72 @@ score = w_{sim}\cdot sim + w_{recency}\cdot recency + w_{returns}\cdot returns\_
 - **自動復元**: システム再起動後に実行中の戦略を再開
 - **注文キュー**: 注文実行のためのバックグラウンドワーカー
 
-### 7. 技術スタック
+### 7. マルチLLMプロバイダーサポート
 
-- **バックエンド**: Python (Flask) + SQLite + Redis（オプション）
+QuantDinger は複数の AI プロバイダーをサポートし、自動検出機能を備えています：
+
+| プロバイダー | 特徴 |
+|------------|------|
+| **OpenRouter** | マルチモデルゲートウェイ（デフォルト）、100+ モデル |
+| **OpenAI** | GPT-4o, GPT-4o-mini |
+| **Google Gemini** | Gemini 1.5 Flash/Pro |
+| **DeepSeek** | DeepSeek Chat（コスパ良好） |
+| **xAI Grok** | Grok Beta |
+
+`.env` でお好みのプロバイダーの API キーを設定するだけで、システムが利用可能なプロバイダーを自動検出します。
+
+### 8. インジケーターコミュニティ
+*共有、発見、取引。*
+
+- **公開と共有**: Pythonインジケーターをコミュニティと共有
+- **購入システム**: 他のユーザーからプレミアムインジケーターを購入
+- **評価とレビュー**: 購入したインジケーターを評価・レビュー
+- **管理者レビュー**: 品質管理のためのモデレーションシステム
+
+### 9. ユーザー管理とセキュリティ
+
+- **マルチユーザーサポート**：PostgreSQL ベースのユーザーアカウント、ロールベースの権限管理
+- **OAuth ログイン**：Google および GitHub OAuth 統合
+- **メール認証**：メール認証コードによる登録とパスワードリセット
+- **セキュリティ機能**：Cloudflare Turnstile キャプチャ、IP/アカウントレート制限
+- **デモモード**：公開デモ用の読み取り専用モード
+
+### 10. 技術スタック
+
+- **バックエンド**: Python (Flask) + PostgreSQL + Redis（オプション）
 - **フロントエンド**: Vue 2 + Ant Design Vue + KlineCharts/ECharts
 - **デプロイ**: Docker Compose
+- **現在のバージョン**: V2.1.1 ([更新履歴](docs/CHANGELOG.md))
 
 ---
 
-## 🔌 対応取引所
+## 🔌 対応取引所とブローカー
 
-QuantDingerは実行のための主要な暗号資産取引所への直接API接続をサポートし、広範な市場データカバレッジのためにCCXTを使用します。
+QuantDingerは複数の市場タイプに対して複数の実行方法をサポートしています：
 
-### 直接APIサポート
+### 暗号資産取引所（直接API）
 
 | 取引所 | 市場 |
 |:--------:|:---------|
 | Binance | 現物, 先物, マージン |
 | OKX | 現物, 無期限, オプション |
 | Bitget | 現物, 先物, コピートレーディング |
+| Bybit | 現物, リニア先物 |
+| Coinbase Exchange | 現物 |
+| Kraken | 現物, 先物 |
+| KuCoin | 現物, 先物 |
+| Gate.io | 現物, 先物 |
+| Bitfinex | 現物, デリバティブ |
+| Deepcoin | 現物, 無期限 |
 
-### CCXT経由でもサポート
+### 伝統的なブローカー
+
+| ブローカー | 市場 | プラットフォーム |
+|:------:|:--------|:---------|
+| **Interactive Brokers (IBKR)** | 米国株式, 香港株式 | TWS / IB Gateway 🆕 |
+| **MetaTrader 5 (MT5)** | 外国為替 | MT5ターミナル 🆕 |
+
+### 市場データ（CCXT経由）
 
 Bybit、Gate.io、Kraken、KuCoin、HTX、および100以上のその他の取引所が市場データ用にサポートされています。
 
@@ -316,9 +390,10 @@ QuantDingerは、包括的な国際化対応により、世界中のユーザー
 | 市場タイプ | データソース | 取引 |
 |-------------|--------------|---------|
 | **暗号資産** | Binance, OKX, Bitget, + 100 取引所 | ✅ 完全サポート |
-| **米国株** | Yahoo Finance, Finnhub, Tiingo | ✅ ブローカーAPI経由 |
-| **中国/香港株** | AkShare, East Money | ⚡ データのみ |
-| **FX** | Finnhub, OANDA | ✅ ブローカーAPI経由 |
+| **米国株** | Yahoo Finance, Finnhub, Tiingo | ✅ IBKR経由 🆕 |
+| **香港株** | AkShare, East Money | ✅ IBKR経由 🆕 |
+| **中国株(A株)** | AkShare, East Money | ⚡ データのみ |
+| **FX** | Finnhub, OANDA | ✅ MT5経由 🆕 |
 | **先物** | 取引所API, AkShare | ⚡ データのみ |
 
 ---
@@ -458,9 +533,14 @@ npm run serve
 
 - **認証**: `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASSWORD`
 - **サーバー**: `PYTHON_API_HOST`, `PYTHON_API_PORT`, `PYTHON_API_DEBUG`
-- **AI / LLM**: `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`
+- **データベース**: `DATABASE_URL` (PostgreSQL 接続文字列)
+- **AI / LLM**: `LLM_PROVIDER` (openrouter/openai/google/deepseek/grok), 各プロバイダー API キー
+- **OAuth**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
+- **セキュリティ**: `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `ENABLE_REGISTRATION`
 - **ウェブ検索**: `SEARCH_PROVIDER`, `SEARCH_GOOGLE_*`, `SEARCH_BING_API_KEY`
+- **注文執行**: `ORDER_MODE` (maker/market), `MAKER_WAIT_SEC`, `MAKER_OFFSET_BPS`
 - **プロキシ (オプション)**: `PROXY_PORT` または `PROXY_URL`
+- **バックグラウンドサービス**: `ENABLE_PENDING_ORDER_WORKER`, `ENABLE_PORTFOLIO_MONITOR`
 
 ---
 
@@ -476,45 +556,69 @@ npm run serve
 
 ---
 
-## 💰 プロジェクトの持続可能性
+## 💼 商用ライセンス & スポンサー（Commercial License & Sponsorship）
 
-QuantDingerはオープンソースで無料で使用できます。有用だと思われる場合は、以下が継続的な開発を支援する方法です：
+QuantDinger のコードは **Apache License 2.0** で提供されています。ただし **Apache 2.0 は商標権を付与しません**。QuantDinger の名称/ロゴ/ブランドは商標およびブランドポリシーの対象です（コードライセンスとは別扱い）：
 
-### 直接寄付
+- **著作権/帰属表示**：LICENSE/NOTICE など、必要な著作権・ライセンス告知は保持してください。
+- **商標（名称/ロゴ/ブランド）**：QuantDinger の名称/ロゴ/ブランドを用いて、出所の誤認や背書きを示唆してはいけません。改変版を再配布する場合、書面許可がない限り QuantDinger ブランド表示の削除/置換が必要になることがあります。
 
-**ERC-20 / BEP-20 / Polygon / Arbitrum**
-```
-0x96fa4962181bea077f8c7240efe46afbe73641a7
-```
-<img src="https://img.shields.io/badge/USDT-Accepted-26A17B?style=flat-square&logo=tether" alt="USDT">
-<img src="https://img.shields.io/badge/ETH-Accepted-3C3C3D?style=flat-square&logo=ethereum" alt="ETH">
+再配布物で QuantDinger のブランド表示を**保持/変更**したい場合（UI 上のロゴ使用などを含む）、**商用ライセンス**についてお問い合わせください。
 
-### 取引所紹介リンク
+参照：`TRADEMARKS.md`
 
-サポートされている取引所に登録する場合、以下のリンクを使用すると紹介特典が提供され、プロジェクトの支援に役立ちます。これらはオプションであり、取引手数料やアカウント機能には影響しません。
+### 商用ライセンスで得られるもの
 
-| 取引所 | 紹介リンク |
-|:--------:|:-------------|
-| Binance | [紹介リンクで登録](https://www.bmwweb.ac/referral/earn-together/refer2earn-usdc/claim?hl=zh-CN&ref=GRO_28502_9OSOJ) |
-| OKX | [紹介リンクで登録](https://www.bjwebptyiou.com/join/14449926) |
-| Bitget | [紹介リンクで登録](https://share.glassgs.com/u/H8XZGS71) |
+- 合意に基づく **ブランド/表示の商用許諾**
+- **運用サポート**：デプロイ、アップグレード、障害対応、保守ガイダンス
+- **コンサルティング**：アーキテクチャレビュー、性能チューニング、戦略ワークフロー相談
+- **スポンサー枠**：スポンサーとしてロゴ/広告掲載（README/サイト/アプリ内など合意に基づく）
+
+### 連絡先
+
+- **Telegram**: [QuantDinger Group](https://t.me/worldinbroker)
+- **Email**: [brokermr810@gmail.com](mailto:brokermr810@gmail.com)
 
 ---
 
-### 商用サービス
+### 💝 直接サポート（寄付）
 
-以下のプロフェッショナルサービスを提供しています：
+あなたのご支援は QuantDinger の維持・改善に役立ちます。
 
-| サービス | 説明 |
-|---------|-------------|
-| **デプロイ & セットアップ** | サーバーのデプロイ、設定、最適化に関するマンツーマンのサポート |
-| **カスタム戦略開発** | 特定のニーズや市場に合わせて設計された取引戦略の開発 |
-| **エンタープライズアップグレード** | 商用ライセンス、優先サポート、ビジネス向けの高度な機能 |
-| **トレーニング & コンサルティング** | 取引チーム向けの実践的なトレーニングセッションと戦略コンサルティング |
+**暗号通貨寄付 (ERC-20 / BEP-20 / Polygon / Arbitrum)**
 
-**ご興味がありますか？** 以下よりお問い合わせください：
-- 📧 Email: [brokermr810@gmail.com](mailto:brokermr810@gmail.com)
-- 💬 Telegram: [QuantDinger Group](https://t.me/quantdinger)
+```
+0x96fa4962181bea077f8c7240efe46afbe73641a7
+```
+
+<p>
+  <img src="https://img.shields.io/badge/USDT-Accepted-26A17B?style=for-the-badge&logo=tether&logoColor=white" alt="USDT">
+  <img src="https://img.shields.io/badge/ETH-Accepted-3C3C3D?style=for-the-badge&logo=ethereum&logoColor=white" alt="ETH">
+</p>
+
+---
+
+### 🎓 サポートパートナー
+
+量的金融の教育と研究を推進する学術機関や組織からのサポートを光栄に思います。
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="https://beinvolved.indiana.edu/organization/quantfiniu" target="_blank">
+        <img src="docs/screenshots/qfs_logo.png" alt="インディアナ大学量的金融学会" width="280" style="border-radius: 8px;">
+      </a>
+      <br/><br/>
+      <strong>量的金融学会 (QFS)</strong><br/>
+      <small>インディアナ大学ブルーミントン校</small><br/>
+      <small>次世代の量的金融専門家を育成</small>
+    </td>
+  </tr>
+</table>
+</div>
+
+> 💡 **サポートパートナーになりませんか？** 大学、研究機関、組織との協力を歓迎します。[brokermr810@gmail.com](mailto:brokermr810@gmail.com) または [Telegram](https://t.me/worldinbroker) でお問い合わせください。
 
 ---
 

@@ -11,7 +11,7 @@
       v-bind="settings"
     >
 
-      <template v-slot:menuHeaderRender>
+      <template #menuHeaderRender>
         <div>
           <img src="~@/assets/slogo.png" />
           <h1>{{ title }}</h1>
@@ -20,7 +20,7 @@
       <!-- 1.0.0+ 版本 pro-layout 提供 API,
           增加 Header 左侧内容区自定义
     -->
-      <template v-slot:headerContentRender>
+      <template #headerContentRender>
         <div>
           <a-tooltip :title="$t('menu.header.refreshPage')">
             <a-icon type="reload" style="font-size: 18px;cursor: pointer;" @click="handleRefresh" />
@@ -53,11 +53,11 @@
           This is SettingDrawer custom footer content.
         </div>
       </setting-drawer>
-      <template v-slot:rightContentRender>
+      <template #rightContentRender>
         <right-content :top-menu="settings.layout === 'topmenu'" :is-mobile="isMobile" :theme="settings.theme" />
       </template>
       <!-- custom footer removed -->
-      <template v-slot:footerRender>
+      <template #footerRender>
         <div style="display: none;"></div>
       </template>
       <router-view :key="refreshKey" />
@@ -117,6 +117,10 @@
         <div class="footer-section copyright">
           {{ menuFooterConfig.copyright }}
         </div>
+        <!-- 版本号 -->
+        <div class="footer-section version">
+          V2.1.3
+        </div>
       </div>
     </div>
   </div>
@@ -162,8 +166,7 @@ export default {
       // end
       isDev: process.env.NODE_ENV === 'development' || process.env.VUE_APP_PREVIEW === 'true',
 
-      // base
-      menus: [],
+      // base - menus moved to computed property
       // 侧栏收起状态
       collapsed: false,
       title: defaultSettings.title,
@@ -200,23 +203,23 @@ export default {
       // Static footer config (local OSS build)
       menuFooterConfig: {
         contact: {
-          support_url: 'https://t.me/worldinbroker',
+          support_url: 'https://t.me/quantdinger',
           feature_request_url: 'https://github.com/brokermr810/QuantDinger/issues',
           email: 'brokermr810@gmail.com',
-          live_chat_url: 'https://t.me/worldinbroker'
+          live_chat_url: 'https://t.me/quantdinger'
         },
         social_accounts: [
           { name: 'GitHub', icon: 'github', url: 'https://github.com/brokermr810/QuantDinger' },
           { name: 'X', icon: 'x', url: 'https://x.com/HenryCryption' },
           { name: 'Discord', icon: 'discord', url: 'https://discord.gg/cn6HVE2KC' },
-          { name: 'Telegram', icon: 'telegram', url: 'https://t.me/worldinbroker' },
+          { name: 'Telegram', icon: 'telegram', url: 'https://t.me/quantdinger' },
           { name: 'YouTube', icon: 'youtube', url: 'https://youtube.com/@quantdinger' }
         ],
         legal: {
           user_agreement: '',
           privacy_policy: ''
         },
-        copyright: '© 2025-2026 QuantDinger'
+        copyright: '© 2025-2026 QuantDinger. All rights reserved.'
       },
       // 是否是首次初始化主题色（用于决定是否显示"正在切换主题"提示）
       isInitialThemeColorLoad: true
@@ -226,11 +229,15 @@ export default {
     ...mapState({
       // 动态主路由
       mainMenu: state => state.permission.addRouters
-    })
+    }),
+    // 响应式菜单 - 根据 addRouters 动态更新
+    menus () {
+      const routes = this.mainMenu.find(item => item.path === '/')
+      return (routes && routes.children) || []
+    }
   },
   created () {
-    const routes = this.mainMenu.find(item => item.path === '/')
-    this.menus = (routes && routes.children) || []
+    // menus is now a computed property - no need to set here
     // 从 store 同步主题设置（从 localStorage 恢复）
     this.settings.theme = this.$store.state.app.theme
     this.settings.primaryColor = this.$store.state.app.color || defaultSettings.primaryColor
@@ -839,6 +846,14 @@ export default {
           border-top: 1px solid rgba(255, 255, 255, 0.1);
           opacity: 0.6;
           font-size: 10px;
+        }
+
+        &.version {
+          margin-top: 4px;
+          font-size: 9px;
+          opacity: 0.4;
+          text-align: center;
+          letter-spacing: 1px;
         }
       }
     }

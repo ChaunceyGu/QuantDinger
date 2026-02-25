@@ -1,11 +1,18 @@
 """
 CN/HK stock data source.
 Supports A-Share and H-Share with multiple public sources.
-Priority (AShare): Eastmoney (intraday/daily) > yfinance (daily) > akshare (daily, optional).
-Priority (HShare): Tencent (intraday) > Eastmoney/Tencent (daily) > yfinance (daily) > akshare (daily, optional).
+
+改进版本（参考 daily_stock_analysis 项目）:
+- 多数据源自动切换（按优先级）
+- 熔断器保护
+- 数据缓存
+- 防封禁策略（随机休眠+UA轮换）
+
+Priority (AShare): Eastmoney > Tencent > Sina > Akshare > yfinance
+Priority (HShare): Tencent > Eastmoney > yfinance > akshare
 """
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import requests
 
@@ -13,6 +20,9 @@ import yfinance as yf
 
 from app.data_sources.base import BaseDataSource
 from app.data_sources.us_stock import USStockDataSource
+from app.data_sources.data_manager import get_ashare_data_manager, AShareDataManager
+from app.data_sources.circuit_breaker import get_ashare_circuit_breaker, get_realtime_circuit_breaker
+from app.data_sources.rate_limiter import get_request_headers, get_tencent_limiter, get_eastmoney_limiter
 from app.utils.logger import get_logger
 from app.utils.http import get_retry_session
 
@@ -166,7 +176,14 @@ class TencentDataMixin:
 
 
 class AShareDataSource(BaseDataSource, TencentDataMixin):
-    """A-Share data source."""
+    """
+    A-Share data source.
+    
+    改进版本：使用 AShareDataManager 实现多数据源自动切换
+    - 熔断器保护
+    - 数据缓存
+    - 防封禁策略
+    """
     
     name = "AShare"
     
@@ -190,6 +207,11 @@ class AShareDataSource(BaseDataSource, TencentDataMixin):
     
     def __init__(self):
         self.us_stock_source = USStockDataSource()
+        # 使用新的数据管理器
+        self._data_manager = get_ashare_data_manager()
+        # 熔断器和限流器
+        self._circuit_breaker = get_ashare_circuit_breaker()
+        self._em_limiter = get_eastmoney_limiter()
     
     def get_kline(
         self,
@@ -198,11 +220,28 @@ class AShareDataSource(BaseDataSource, TencentDataMixin):
         limit: int,
         before_time: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Fetch A-Share Kline data."""
-        klines = []
+        """
+        Fetch A-Share Kline data.
         
-        # Prefer Eastmoney (supports most intraday timeframes)
-        klines = self._fetch_eastmoney_ashare(symbol, timeframe, limit)
+        改进版本：使用数据管理器自动切换数据源
+        """
+        # 使用新的数据管理器获取数据（自动切换数据源）
+        klines, source = self._data_manager.get_kline(
+            symbol=symbol,
+            timeframe=timeframe,
+            limit=limit,
+            before_time=before_time
+        )
+        
+        if klines:
+            self.log_result(symbol, klines, timeframe)
+            return klines
+        
+        # 如果数据管理器失败，使用传统方式作为最后备选
+        logger.warning(f"[AShare] 数据管理器获取 {symbol} 失败，尝试传统方式")
+        
+        # 传统方式：直接调用东方财富
+        klines = self._fetch_eastmoney_ashare_legacy(symbol, timeframe, limit)
         if klines:
             klines = self.filter_and_limit(klines, limit, before_time)
             self.log_result(symbol, klines, timeframe)
@@ -212,20 +251,24 @@ class AShareDataSource(BaseDataSource, TencentDataMixin):
         if timeframe in ('1D', '1W'):
             yahoo_symbol = self._to_yahoo_symbol(symbol)
             if yahoo_symbol:
-                # logger.info(f"尝试使用 yfinance 获取A股: {yahoo_symbol}")
                 klines = self.us_stock_source.get_kline(yahoo_symbol, timeframe, limit, before_time)
                 if klines:
-                    # logger.info(f"yfinance 成功获取 {len(klines)} 条A股数据")
                     return klines
         
-        # Fallback: akshare (daily/weekly)
-        if HAS_AKSHARE and timeframe in self.AKSHARE_PERIOD_MAP:
-            klines = self._fetch_akshare(symbol, timeframe, limit, before_time)
-            if klines:
-                return klines
-        
         logger.warning(f"AShare {symbol} data fetch failed")
-        return klines
+        return []
+    
+    def _fetch_eastmoney_ashare_legacy(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int
+    ) -> List[Dict[str, Any]]:
+        """
+        传统方式获取东方财富数据（兜底用）
+        不使用新的熔断器和限流器，保持原有逻辑
+        """
+        return self._fetch_eastmoney_ashare(symbol, timeframe, limit)
     
     def _to_tencent_symbol(self, symbol: str) -> Optional[str]:
         """转换为腾讯财经格式"""
@@ -386,6 +429,109 @@ class AShareDataSource(BaseDataSource, TencentDataMixin):
             logger.error(traceback.format_exc())
         
         return klines
+    
+    def get_ticker(self, symbol: str) -> Dict[str, Any]:
+        """
+        获取A股实时报价
+        
+        改进版本：使用数据管理器自动切换数据源
+        - 熔断器保护
+        - 数据缓存（60秒TTL）
+        - 多数据源自动切换
+        
+        Returns:
+            dict: {
+                'last': 当前价格,
+                'change': 涨跌额,
+                'changePercent': 涨跌幅,
+                'high': 最高价,
+                'low': 最低价,
+                'open': 开盘价,
+                'previousClose': 昨收价
+            }
+        """
+        symbol = (symbol or '').strip()
+        
+        # 使用数据管理器获取实时报价（自动切换数据源）
+        quote, source = self._data_manager.get_realtime_quote(symbol)
+        if quote and quote.get('last', 0) > 0:
+            return quote
+        
+        # 如果数据管理器失败，使用传统方式作为兜底
+        logger.debug(f"[AShare] 数据管理器获取 {symbol} 实时报价失败，尝试传统方式")
+        return self._get_ticker_legacy(symbol)
+    
+    def _get_ticker_legacy(self, symbol: str) -> Dict[str, Any]:
+        """
+        传统方式获取实时报价（兜底用）
+        
+        保持原有逻辑，不使用熔断器和限流器
+        """
+        # 优先使用东方财富实时行情 API
+        try:
+            # 判断市场
+            if symbol.startswith('6'):
+                secid = f"1.{symbol}"  # 上海
+            elif symbol.startswith('0') or symbol.startswith('3'):
+                secid = f"0.{symbol}"  # 深圳
+            elif symbol.startswith('4') or symbol.startswith('8'):
+                secid = f"0.{symbol}"  # 北交所
+            else:
+                secid = f"1.{symbol}"
+            
+            # 东方财富实时行情接口
+            url = "https://push2.eastmoney.com/api/qt/stock/get"
+            params = {
+                'secid': secid,
+                'fields': 'f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170',
+            }
+            
+            session = get_retry_session()
+            response = session.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and data.get('data'):
+                    d = data['data']
+                    last_price = d.get('f43', 0)
+                    if last_price and last_price > 0:
+                        divisor = 100 if last_price > 1000 else 1
+                        return {
+                            'last': last_price / divisor,
+                            'high': d.get('f44', 0) / divisor,
+                            'low': d.get('f45', 0) / divisor,
+                            'open': d.get('f46', 0) / divisor,
+                            'previousClose': d.get('f60', 0) / divisor,
+                            'change': d.get('f169', 0) / divisor,
+                            'changePercent': d.get('f170', 0) / 100
+                        }
+        except Exception as e:
+            logger.debug(f"Eastmoney ticker failed for {symbol}: {e}")
+        
+        # 降级使用腾讯实时报价
+        try:
+            tencent_symbol = self._to_tencent_symbol(symbol)
+            if tencent_symbol:
+                url = f"http://qt.gtimg.cn/q={tencent_symbol}"
+                response = requests.get(url, timeout=10)
+                content = response.content.decode('gbk', errors='ignore')
+                if '="' in content:
+                    data_str = content.split('="')[1].strip('";\n')
+                    if data_str:
+                        parts = data_str.split('~')
+                        if len(parts) > 32:
+                            return {
+                                'last': float(parts[3]) if parts[3] else 0,
+                                'change': float(parts[31]) if parts[31] else 0,
+                                'changePercent': float(parts[32]) if parts[32] else 0,
+                                'high': float(parts[33]) if len(parts) > 33 and parts[33] else 0,
+                                'low': float(parts[34]) if len(parts) > 34 and parts[34] else 0,
+                                'open': float(parts[5]) if len(parts) > 5 and parts[5] else 0,
+                                'previousClose': float(parts[4]) if parts[4] else 0
+                            }
+        except Exception as e:
+            logger.debug(f"Tencent ticker failed for {symbol}: {e}")
+        
+        return {'last': 0, 'symbol': symbol}
 
 
 class HShareDataSource(BaseDataSource, TencentDataMixin):
@@ -613,3 +759,119 @@ class HShareDataSource(BaseDataSource, TencentDataMixin):
             logger.error(traceback.format_exc())
         
         return klines
+    
+    def get_ticker(self, symbol: str) -> Dict[str, Any]:
+        """
+        获取港股实时报价
+        
+        使用腾讯财经实时行情API获取实时报价
+        
+        Returns:
+            dict: {
+                'last': 当前价格,
+                'change': 涨跌额,
+                'changePercent': 涨跌幅,
+                'high': 最高价,
+                'low': 最低价,
+                'open': 开盘价,
+                'previousClose': 昨收价
+            }
+        """
+        symbol = (symbol or '').strip()
+        
+        # 使用腾讯财经实时报价
+        try:
+            tencent_symbol = self._to_tencent_symbol(symbol)
+            url = f"http://qt.gtimg.cn/q={tencent_symbol}"
+            response = requests.get(url, timeout=10)
+            content = response.content.decode('gbk', errors='ignore')
+            if '="' in content:
+                data_str = content.split('="')[1].strip('";\n')
+                if data_str:
+                    parts = data_str.split('~')
+                    if len(parts) > 32:
+                        return {
+                            'last': float(parts[3]) if parts[3] else 0,
+                            'change': float(parts[31]) if parts[31] else 0,
+                            'changePercent': float(parts[32]) if parts[32] else 0,
+                            'high': float(parts[33]) if len(parts) > 33 and parts[33] else 0,
+                            'low': float(parts[34]) if len(parts) > 34 and parts[34] else 0,
+                            'open': float(parts[5]) if len(parts) > 5 and parts[5] else 0,
+                            'previousClose': float(parts[4]) if parts[4] else 0
+                        }
+        except Exception as e:
+            logger.debug(f"Tencent ticker failed for {symbol}: {e}")
+        
+        # 降级使用东方财富
+        try:
+            hk_symbol = symbol.zfill(5)
+            secid = f"116.{hk_symbol}"
+            
+            url = "https://push2.eastmoney.com/api/qt/stock/get"
+            params = {
+                'secid': secid,
+                'fields': 'f43,f44,f45,f46,f47,f48,f57,f58,f60,f169,f170',
+            }
+            
+            session = get_retry_session()
+            response = session.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and data.get('data'):
+                    d = data['data']
+                    last_price = d.get('f43', 0)
+                    if last_price and last_price > 0:
+                        divisor = 1000 if last_price > 10000 else 100 if last_price > 1000 else 1
+                        return {
+                            'last': last_price / divisor,
+                            'high': d.get('f44', 0) / divisor,
+                            'low': d.get('f45', 0) / divisor,
+                            'open': d.get('f46', 0) / divisor,
+                            'previousClose': d.get('f60', 0) / divisor,
+                            'change': d.get('f169', 0) / divisor,
+                            'changePercent': d.get('f170', 0) / 100
+                        }
+        except Exception as e:
+            logger.debug(f"Eastmoney ticker failed for {symbol}: {e}")
+        
+        # 第三备选: yfinance
+        try:
+            import yfinance as yf
+            # 港股在 yfinance 中的格式是 XXXX.HK
+            yf_symbol = f"{symbol.zfill(4)}.HK"
+            ticker = yf.Ticker(yf_symbol)
+            
+            # Try fast_info first (faster)
+            try:
+                info = ticker.fast_info
+                if hasattr(info, 'last_price') and info.last_price and info.last_price > 0:
+                    return {
+                        'last': float(info.last_price),
+                        'change': float(info.last_price - info.previous_close) if hasattr(info, 'previous_close') and info.previous_close else 0,
+                        'changePercent': float((info.last_price - info.previous_close) / info.previous_close * 100) if hasattr(info, 'previous_close') and info.previous_close else 0,
+                        'high': float(info.day_high) if hasattr(info, 'day_high') and info.day_high else float(info.last_price),
+                        'low': float(info.day_low) if hasattr(info, 'day_low') and info.day_low else float(info.last_price),
+                        'open': float(info.open) if hasattr(info, 'open') and info.open else float(info.last_price),
+                        'previousClose': float(info.previous_close) if hasattr(info, 'previous_close') and info.previous_close else 0
+                    }
+            except Exception:
+                pass
+            
+            # Fallback to history
+            hist = ticker.history(period="2d")
+            if hist is not None and not hist.empty:
+                current = float(hist['Close'].iloc[-1])
+                prev_close = float(hist['Close'].iloc[-2]) if len(hist) > 1 else current
+                return {
+                    'last': current,
+                    'change': current - prev_close,
+                    'changePercent': (current - prev_close) / prev_close * 100 if prev_close else 0,
+                    'high': float(hist['High'].iloc[-1]),
+                    'low': float(hist['Low'].iloc[-1]),
+                    'open': float(hist['Open'].iloc[-1]),
+                    'previousClose': prev_close
+                }
+        except Exception as e:
+            logger.debug(f"yfinance ticker failed for {symbol}: {e}")
+        
+        return {'last': 0, 'symbol': symbol}

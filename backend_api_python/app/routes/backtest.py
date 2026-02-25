@@ -1,7 +1,7 @@
 """
 Backtest API routes
 """
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from datetime import datetime
 import traceback
 import json
@@ -11,6 +11,7 @@ import os
 from app.services.backtest import BacktestService
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
+from app.utils.auth import login_required
 import requests
 
 logger = get_logger(__name__)
@@ -20,7 +21,9 @@ backtest_service = BacktestService()
 
 
 def _openrouter_base_and_key() -> tuple[str, str]:
-    key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    from app.config import APIKeys
+    # Use APIKeys to get the key (handles env var + config cache properly)
+    key = APIKeys.OPENROUTER_API_KEY or ""
     base = os.getenv("OPENROUTER_BASE_URL", "").strip()
     if not base:
         api_url = os.getenv("OPENROUTER_API_URL", "").strip()
@@ -82,10 +85,48 @@ def _normalize_lang(lang: str | None) -> str:
     return l2 if l2 in supported else "zh-CN"
 
 
+@backtest_bp.route('/backtest/precision-info', methods=['GET'])
+def get_precision_info():
+    """
+    获取回测精度信息（用于前端提示）
+    
+    Params (Query String):
+        market: 市场类型
+        startDate: 开始日期 (YYYY-MM-DD)
+        endDate: 结束日期 (YYYY-MM-DD)
+        
+    Returns:
+        精度信息，包含推荐的执行时间框架和预估K线数量
+    """
+    try:
+        # Use request.args for GET params
+        market = request.args.get('market', 'crypto')
+        start_date_str = request.args.get('startDate', '')
+        end_date_str = request.args.get('endDate', '')
+        
+        if not start_date_str or not end_date_str:
+            return jsonify({'code': 0, 'msg': 'startDate and endDate are required'}), 400
+        
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+        
+        exec_tf, precision_info = backtest_service.get_execution_timeframe(start_date, end_date, market)
+        
+        return jsonify({
+            'code': 1,
+            'msg': 'success',
+            'data': precision_info
+        })
+    except Exception as e:
+        logger.error(f"Get precision info failed: {e}")
+        return jsonify({'code': 0, 'msg': str(e)}), 400
+
+
 @backtest_bp.route('/backtest', methods=['POST'])
+@login_required
 def run_backtest():
     """
-    Run indicator backtest
+    Run indicator backtest for the current user.
     
     Params:
         indicatorId: Indicator ID (optional)
@@ -97,6 +138,7 @@ def run_backtest():
         endDate: End date (YYYY-MM-DD)
         initialCapital: Initial capital (default 10000)
         commission: Commission rate (default 0.001)
+        enableMtf: Enable multi-timeframe backtest (default true, only for crypto)
     """
     try:
         data = request.get_json()
@@ -107,8 +149,8 @@ def run_backtest():
                 'data': None
             }), 400
         
-        # Extract params
-        user_id = int(data.get('userid') or data.get('userId') or 1)
+        # Extract params - use current user's ID
+        user_id = g.user_id
         indicator_code = data.get('indicatorCode', '')
         indicator_id = data.get('indicatorId')
         symbol = data.get('symbol', '')
@@ -122,6 +164,10 @@ def run_backtest():
         leverage = int(data.get('leverage', 1))
         trade_direction = data.get('tradeDirection', 'long')  # long, short, both
         strategy_config = data.get('strategyConfig') or {}
+        # 多时间框架回测开关（默认开启，仅加密货币市场有效）
+        enable_mtf = data.get('enableMtf', True)
+        if isinstance(enable_mtf, str):
+            enable_mtf = enable_mtf.lower() in ['true', '1', 'yes']
         
         # (Debug) log received params if needed
         
@@ -178,26 +224,50 @@ def run_backtest():
             }), 400
         
         
-        # 执行回测
-        result = backtest_service.run(
-            indicator_code=indicator_code,
-            market=market,
-            symbol=symbol,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            initial_capital=initial_capital,
-            commission=commission,
-            slippage=slippage,
-            leverage=leverage,
-            trade_direction=trade_direction,
-            strategy_config=strategy_config
-        )
+        # 执行回测（支持多时间框架高精度回测）
+        # 加密货币市场且启用MTF时，使用多时间框架回测
+        if enable_mtf and market.lower() in ['crypto', 'cryptocurrency']:
+            result = backtest_service.run_multi_timeframe(
+                indicator_code=indicator_code,
+                market=market,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=initial_capital,
+                commission=commission,
+                slippage=slippage,
+                leverage=leverage,
+                trade_direction=trade_direction,
+                strategy_config=strategy_config,
+                enable_mtf=True
+            )
+        else:
+            result = backtest_service.run(
+                indicator_code=indicator_code,
+                market=market,
+                symbol=symbol,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=initial_capital,
+                commission=commission,
+                slippage=slippage,
+                leverage=leverage,
+                trade_direction=trade_direction,
+                strategy_config=strategy_config
+            )
+            # 添加标准回测的精度信息
+            result['precision_info'] = {
+                'enabled': False,
+                'timeframe': timeframe,
+                'precision': 'standard',
+                'message': '使用标准K线回测'
+            }
 
         # Persist backtest run for AI optimization / history
         run_id = None
         try:
-            now_ts = int(time.time())
             with get_db_connection() as db:
                 cur = db.cursor()
                 cur.execute(
@@ -206,7 +276,7 @@ def run_backtest():
                     (user_id, indicator_id, market, symbol, timeframe, start_date, end_date,
                      initial_capital, commission, slippage, leverage, trade_direction,
                      strategy_config, status, error_message, result_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                     """,
                     (
                         user_id,
@@ -224,8 +294,7 @@ def run_backtest():
                         json.dumps(strategy_config or {}, ensure_ascii=False),
                         'success',
                         '',
-                        json.dumps(result or {}, ensure_ascii=False),
-                        now_ts
+                        json.dumps(result or {}, ensure_ascii=False)
                     )
                 )
                 run_id = cur.lastrowid
@@ -257,9 +326,8 @@ def run_backtest():
         # Best-effort persist failed run (if we have enough context)
         try:
             data = data if isinstance(data, dict) else {}
-            user_id = int(data.get('userid') or data.get('userId') or 1)
+            user_id = g.user_id
             indicator_id = data.get('indicatorId')
-            now_ts = int(time.time())
             with get_db_connection() as db:
                 cur = db.cursor()
                 cur.execute(
@@ -268,7 +336,7 @@ def run_backtest():
                     (user_id, indicator_id, market, symbol, timeframe, start_date, end_date,
                      initial_capital, commission, slippage, leverage, trade_direction,
                      strategy_config, status, error_message, result_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                     """,
                     (
                         user_id,
@@ -286,8 +354,7 @@ def run_backtest():
                         json.dumps(data.get('strategyConfig') or {}, ensure_ascii=False),
                         'failed',
                         str(e),
-                        '',
-                        now_ts
+                        ''
                     )
                 )
                 db.commit()
@@ -301,13 +368,13 @@ def run_backtest():
         }), 500
 
 
-@backtest_bp.route('/backtest/history', methods=['POST'])
+@backtest_bp.route('/backtest/history', methods=['GET'])
+@login_required
 def get_backtest_history():
     """
-    Get backtest run history (saved in SQLite).
+    Get backtest run history for the current user.
 
-    Params:
-        userid: User ID (default 1)
+    Params (Query String):
         limit: Page size (default 50, max 200)
         offset: Offset (default 0)
         indicatorId: Optional indicator id filter
@@ -316,17 +383,17 @@ def get_backtest_history():
         timeframe: Optional timeframe filter
     """
     try:
-        data = request.get_json() or {}
-        user_id = int(data.get('userid') or data.get('userId') or 1)
-        limit = int(data.get('limit') or 50)
-        offset = int(data.get('offset') or 0)
+        # Use current user's ID
+        user_id = g.user_id
+        limit = int(request.args.get('limit') or 50)
+        offset = int(request.args.get('offset') or 0)
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
 
-        indicator_id = data.get('indicatorId')
-        symbol = (data.get('symbol') or '').strip()
-        market = (data.get('market') or '').strip()
-        timeframe = (data.get('timeframe') or '').strip()
+        indicator_id = request.args.get('indicatorId')
+        symbol = (request.args.get('symbol') or '').strip()
+        market = (request.args.get('market') or '').strip()
+        timeframe = (request.args.get('timeframe') or '').strip()
 
         where = ["user_id = ?"]
         params = [user_id]
@@ -379,19 +446,18 @@ def get_backtest_history():
         return jsonify({'code': 0, 'msg': str(e), 'data': None}), 500
 
 
-@backtest_bp.route('/backtest/get', methods=['POST'])
+@backtest_bp.route('/backtest/get', methods=['GET'])
+@login_required
 def get_backtest_run():
     """
-    Get a backtest run detail by run id (includes result_json).
+    Get a backtest run detail by run id for the current user.
 
-    Params:
-        userid: User ID (default 1)
+    Params (Query String):
         runId: Backtest run id (required)
     """
     try:
-        data = request.get_json() or {}
-        user_id = int(data.get('userid') or data.get('userId') or 1)
-        run_id = int(data.get('runId') or 0)
+        user_id = g.user_id
+        run_id = int(request.args.get('runId') or 0)
         if not run_id:
             return jsonify({'code': 0, 'msg': 'runId is required', 'data': None}), 400
 
@@ -646,17 +712,18 @@ def _heuristic_ai_advice(runs: list[dict], lang: str) -> str:
 
 
 @backtest_bp.route('/backtest/aiAnalyze', methods=['POST'])
+@login_required
 def ai_analyze_backtest_runs():
     """
-    AI analyze selected backtest runs and provide strategy_config tuning suggestions.
+    AI analyze selected backtest runs and provide strategy_config tuning suggestions
+    for the current user.
 
     Params:
-        userid: User ID (default 1)
         runIds: list[int] (required)
     """
     try:
         data = request.get_json() or {}
-        user_id = int(data.get('userid') or data.get('userId') or 1)
+        user_id = g.user_id
         lang = _normalize_lang(data.get('lang'))
         run_ids = data.get('runIds') or []
         if not isinstance(run_ids, list) or not run_ids:

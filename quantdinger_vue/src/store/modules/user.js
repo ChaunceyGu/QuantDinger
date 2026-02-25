@@ -1,6 +1,6 @@
 import storage from 'store'
 import expirePlugin from 'store/plugins/expire'
-import { login, emailLogin, mobileLogin, logout, getUserInfo, apiLogout, updateUserInfo, oauthCallback } from '@/api/login'
+import { login, logout, getUserInfo } from '@/api/login'
 import { ACCESS_TOKEN, USER_INFO, USER_ROLES } from '@/store/mutation-types'
 import { welcome } from '@/utils/util'
 
@@ -30,7 +30,11 @@ function getStoredToken () {
 }
 
 const initialInfo = getStoredInfo()
-const initialRoles = getStoredRoles()
+// If is_demo is missing (legacy cache), force roles to empty to trigger GetInfo in permission.js
+let initialRoles = getStoredRoles()
+if (initialInfo && typeof initialInfo.is_demo === 'undefined') {
+  initialRoles = []
+}
 const initialToken = getStoredToken() || ''
 const initialName = initialInfo.nickname || initialInfo.username || ''
 const initialAvatar = initialInfo.avatar || ''
@@ -66,7 +70,7 @@ const user = {
 
   actions: {
     // 登录
-    Login ({ commit }, userInfo) {
+    Login ({ commit, dispatch }, userInfo) {
       return new Promise((resolve, reject) => {
         login(userInfo).then(response => {
           // 适配 Python 后端响应格式
@@ -86,108 +90,26 @@ const user = {
             commit('SET_NAME', { name: name, welcome: welcome() })
             commit('SET_AVATAR', info.avatar || '/avatar2.jpg')
 
-            // 设置默认角色，防止路由鉴权失败
-            const roles = [{ id: 'admin', permissionList: ['dashboard', 'exception', 'account'] }]
+            // 从服务器返回的角色信息设置角色
+            let roles = [DEFAULT_ROLE]
+            if (info.role) {
+              // role: { id: 'admin', permissions: [...] }
+              const roleId = info.role.id || info.role
+              const permissions = info.role.permissions || []
+              roles = [{
+                id: roleId,
+                permissionList: permissions.length > 0 ? permissions : ['dashboard']
+              }]
+            }
             commit('SET_ROLES', roles)
             storage.set(USER_ROLES, roles, expiresAt)
+
+            // 重置路由，强制重新生成（根据新用户的角色）
+            dispatch('ResetRoutes')
 
             resolve(response)
           } else {
             reject(new Error((response && response.msg) || 'Login failed'))
-          }
-        }).catch(error => {
-          reject(error)
-        })
-      })
-    },
-
-    // 邮箱验证码登录
-    EmailLogin ({ commit }, userInfo) {
-      return new Promise((resolve, reject) => {
-        emailLogin(userInfo).then(response => {
-          // 新API响应格式: { code: 1, msg: "登录成功", data: { token, userInfo } }
-          if (response.code === 1 && response.data) {
-            const token = response.data.token
-            storage.set(ACCESS_TOKEN, token, new Date().getTime() + 7 * 24 * 60 * 60 * 1000)
-            commit('SET_TOKEN', token)
-            // 保存用户信息（从登录接口返回的 userInfo）
-            if (response.data.userInfo) {
-              const userInfoData = response.data.userInfo
-              commit('SET_INFO', userInfoData)
-
-              // 设置用户名
-              if (userInfoData.nickname) {
-                commit('SET_NAME', { name: userInfoData.nickname, welcome: welcome() })
-              } else if (userInfoData.username) {
-                commit('SET_NAME', { name: userInfoData.username, welcome: welcome() })
-              }
-
-              // 设置头像
-              if (userInfoData.avatar) {
-                commit('SET_AVATAR', userInfoData.avatar)
-              }
-
-              // 设置角色（如果有）
-              if (userInfoData.role) {
-                commit('SET_ROLES', userInfoData.role)
-              } else if (userInfoData.roles) {
-                commit('SET_ROLES', userInfoData.roles)
-              } else {
-                // 如果没有角色信息，设置一个默认角色对象，避免路由守卫卡住
-                // 设置一个标记，表示已经初始化过用户信息
-                commit('SET_ROLES', [{ id: 'default', permissionList: [] }])
-              }
-            }
-            resolve(response)
-          } else {
-            reject(new Error(response.msg || '登录失败'))
-          }
-        }).catch(error => {
-          reject(error)
-        })
-      })
-    },
-
-    // 手机号验证码登录
-    MobileLogin ({ commit }, userInfo) {
-      return new Promise((resolve, reject) => {
-        mobileLogin(userInfo).then(response => {
-          // 新API响应格式: { code: 1, msg: "登录成功", data: { token, userInfo } }
-          if (response.code === 1 && response.data) {
-            const token = response.data.token
-            storage.set(ACCESS_TOKEN, token, new Date().getTime() + 7 * 24 * 60 * 60 * 1000)
-            commit('SET_TOKEN', token)
-            // 保存用户信息（从登录接口返回的 userInfo）
-            if (response.data.userInfo) {
-              const userInfoData = response.data.userInfo
-              commit('SET_INFO', userInfoData)
-
-              // 设置用户名
-              if (userInfoData.nickname) {
-                commit('SET_NAME', { name: userInfoData.nickname, welcome: welcome() })
-              } else if (userInfoData.username) {
-                commit('SET_NAME', { name: userInfoData.username, welcome: welcome() })
-              }
-
-              // 设置头像
-              if (userInfoData.avatar) {
-                commit('SET_AVATAR', userInfoData.avatar)
-              }
-
-              // 设置角色（如果有）
-              if (userInfoData.role) {
-                commit('SET_ROLES', userInfoData.role)
-              } else if (userInfoData.roles) {
-                commit('SET_ROLES', userInfoData.roles)
-              } else {
-                // 如果没有角色信息，设置一个默认角色对象，避免路由守卫卡住
-                // 设置一个标记，表示已经初始化过用户信息
-                commit('SET_ROLES', [{ id: 'default', permissionList: [] }])
-              }
-            }
-            resolve(response)
-          } else {
-            reject(new Error(response.msg || '登录失败'))
           }
         }).catch(error => {
           reject(error)
@@ -256,30 +178,12 @@ const user = {
       })
     },
 
-    // 更新用户基本信息
-    UpdateUserInfo ({ commit, state }, payload) {
-      return new Promise((resolve, reject) => {
-        updateUserInfo(payload).then(res => {
-          if (res && res.code === 1) {
-            // 合并本地 store 的 info
-            const newInfo = { ...state.info, ...payload }
-            commit('SET_INFO', newInfo)
-            if (newInfo.nickname) {
-              commit('SET_NAME', { name: newInfo.nickname, welcome: welcome() })
-            }
-            resolve(res)
-          } else {
-            reject(new Error((res && res.msg) || '修改失败'))
-          }
-        }).catch(err => reject(err))
-      })
-    },
-
     // 获取用户信息（从 store 中获取，不再请求接口）
     GetInfo ({ commit, state }) {
       return new Promise((resolve, reject) => {
         // 用户信息已经在登录时保存到 store 中，直接返回
-        if (state.info && Object.keys(state.info).length > 0) {
+        // 增加 check: 必须包含 is_demo 字段，否则视为过期缓存，强制刷新
+        if (state.info && Object.keys(state.info).length > 0 && typeof state.info.is_demo !== 'undefined') {
           // 补全 Roles
           const info = state.info
           if (info.role) {
@@ -332,58 +236,10 @@ const user = {
       })
     },
 
-    // OAuth 登录（Google/GitHub）
-    OAuthLogin ({ commit }, userInfo) {
-      return new Promise((resolve, reject) => {
-        oauthCallback(userInfo).then(response => {
-          // 新API响应格式: { code: 1, msg: "登录成功", data: { token, userInfo } }
-          if (response.code === 1 && response.data) {
-            const token = response.data.token
-            storage.set(ACCESS_TOKEN, token, new Date().getTime() + 7 * 24 * 60 * 60 * 1000)
-            commit('SET_TOKEN', token)
-            // 保存用户信息（从登录接口返回的 userInfo）
-            if (response.data.userInfo) {
-              const userInfoData = response.data.userInfo
-              commit('SET_INFO', userInfoData)
-
-              // 设置用户名
-              if (userInfoData.nickname) {
-                commit('SET_NAME', { name: userInfoData.nickname, welcome: welcome() })
-              } else if (userInfoData.username) {
-                commit('SET_NAME', { name: userInfoData.username, welcome: welcome() })
-              }
-
-              // 设置头像
-              if (userInfoData.avatar) {
-                commit('SET_AVATAR', userInfoData.avatar)
-              }
-
-              // 设置角色（如果有）
-              if (userInfoData.role) {
-                commit('SET_ROLES', userInfoData.role)
-              } else if (userInfoData.roles) {
-                commit('SET_ROLES', userInfoData.roles)
-              } else {
-                // 如果没有角色信息，设置一个默认角色对象，避免路由守卫卡住
-                commit('SET_ROLES', [{ id: 'default', permissionList: [] }])
-              }
-            }
-            resolve(response)
-          } else {
-            reject(new Error(response.msg || '登录失败'))
-          }
-        }).catch(error => {
-          reject(error)
-        })
-      })
-    },
-
     // 登出
-    Logout ({ commit, state }) {
+    Logout ({ commit, dispatch }) {
       return new Promise((resolve) => {
-        // 兼容旧登出与新后端登出
-        const req = typeof apiLogout === 'function' ? apiLogout() : logout(state.token)
-        req.then(() => {
+        logout().then(() => {
           commit('SET_TOKEN', '')
           commit('SET_ROLES', [])
           commit('SET_INFO', {})
@@ -392,12 +248,16 @@ const user = {
           storage.remove(ACCESS_TOKEN)
           storage.remove(USER_INFO)
           storage.remove(USER_ROLES)
+          // 重置路由
+          dispatch('ResetRoutes')
           resolve()
         }).catch(() => {
           // 登出失败时也继续执行，确保清理本地状态
           storage.remove(ACCESS_TOKEN)
           storage.remove(USER_INFO)
           storage.remove(USER_ROLES)
+          // 重置路由
+          dispatch('ResetRoutes')
           resolve()
         }).finally(() => {
         })
